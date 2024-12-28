@@ -1,7 +1,5 @@
 #pragma once
 
-/**
- * @brief main include file for access to public libnfc API.
- */
+// Main include file for all public NFC related API.
 
 #include "PN532.h"

@@ -6,9 +6,13 @@ PN532::PN532(USARTSerial* serialInterface, uint8_t resetPin, uint8_t irqPin)
       irq_pin_(irqPin),
       reset_pin_(resetPin) {}
 
-void PN532::Begin() {
+Status PN532::Begin() {
   pinMode(reset_pin_, OUTPUT);
   digitalWrite(reset_pin_, HIGH);
 
   serial_interface_->begin(115200);
+
+  return ResetController();
 }
+
+Status PN532::ResetController() { return Status::kOk; }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Particle.h"
+#include "libbase.h"
 
 // Communicates with a PN532 via UART.
 class PN532 {
@@ -17,12 +17,12 @@ class PN532 {
   //
   // Initializes the P2 hardware configuration (pinmodes, serial interface),
   // resets the PN532 and configures it for Initiator / PCD mode.
-  void Begin();
+  Status Begin();
 
  private:
   USARTSerial* serial_interface_;
   int8_t irq_pin_;
   int8_t reset_pin_;
 
-  void Reset();
+  Status ResetController();
 };
