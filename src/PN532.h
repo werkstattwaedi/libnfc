@@ -6,7 +6,7 @@
  * @brief main include file for to communicate with a PN532 via UART.
  */
 class PN532 {
-public:
+ public:
   /**
    * @brief  Instantiates a new PN532 controller.
    *
@@ -16,7 +16,7 @@ public:
    */
   PN532(USARTSerial* serialInterface, uint8_t resetPin, uint8_t irqPin);
 
-  setup();
+  void setup();
 
-private:
+ private:
 };
