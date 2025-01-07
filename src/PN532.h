@@ -9,11 +9,9 @@
 // See https://files.waveshare.com/upload/b/bb/Pn532um.pdf
 // 6.2 Host controller communication protocol
 struct DataFrame {
-  // The "Packet Data Information" block of the frame.
-  uint8_t packetData[254];
-  // The length of packetData. This does not include the TFI, thus is LEN-1 of
-  // the frame.
-  size_t packetLength;
+  uint8_t command;
+  uint8_t params[254];
+  size_t params_length;
 };
 
 // Communicates with a PN532 via UART.
@@ -55,6 +53,19 @@ class PN532 {
                          system_tick_t timeout_ms = CONCURRENT_WAIT_FOREVER,
                          int retries = 3);
 
+  // Sends the command and waits for the response.
+  //
+  // The response data will be put in command_in_response_out.
+  // This function blocks until the data is received.
+  //
+  // Args:
+  //   command_in_response_out: The in/out DataFrame .
+  //   timeout_ms: Timeout to wait for trasmission start.
+  //   retries: Number of retries in case of a communication error.
+  Status CallFunction(DataFrame* command_in_response_out,
+                      system_tick_t timeout_ms = CONCURRENT_WAIT_FOREVER,
+                      int retries = 3);
+
  private:
   bool is_initialized_;
   USARTSerial* serial_interface_;
@@ -66,6 +77,10 @@ class PN532 {
   // Resets the PN532 via reset_pin_, then wakes it up and configures
   // it as PCD
   Status ResetController();
+
+  // Verified the communication and checks the expected response to
+  // GetFirmwareVersion
+  Status CheckControllerFirmware();
 
   // Sends the command_data payload to the PN532.
   Status WriteFrame(DataFrame* command_data);

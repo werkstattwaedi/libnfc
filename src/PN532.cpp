@@ -10,6 +10,8 @@ const uint8_t PN532_ACK[] = {0x00, 0x00, 0xFF, 0x00, 0xFF, 0x00};
 const uint8_t PN532_NACK[] = {0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00};
 const uint8_t PN532_FRAME_START[] = {PN532_PREAMBLE, PN532_STARTCODE1,
                                      PN532_STARTCODE2};
+// PN532, V1.6
+const uint8_t PN532_FIRMWARE_RESPONSE[] = {0x32, 0x01, 0x06, 0x07};
 
 PN532::PN532(USARTSerial* serialInterface, uint8_t resetPin, uint8_t irqPin)
     : is_initialized_(false),
@@ -24,7 +26,7 @@ Status PN532::Begin() {
   }
   is_initialized_ = true;
 
-  pn532_log.info("PN532::Begin [interface%d, irq:%d, reset:%d]",
+  pn532_log.info("PN532::Begin [interface:%d, irq:%d, reset:%d]",
                  serial_interface_->interface(), irq_pin_, reset_pin_);
 
   os_semaphore_create(&response_available_, 1, 0);
@@ -33,7 +35,8 @@ Status PN532::Begin() {
   digitalWrite(reset_pin_, HIGH);
 
   pinMode(irq_pin_, INPUT);
-  attachInterrupt(D2, &PN532::ResponseAvailableInterruptHandler, this, FALLING);
+  attachInterrupt(irq_pin_, &PN532::ResponseAvailableInterruptHandler, this,
+                  FALLING);
 
   serial_interface_->begin(115200);
 
@@ -44,42 +47,63 @@ Status PN532::Begin() {
   return ResetController();
 }
 
-Status PN532::SendCommand(DataFrame* commandData, int retries) {
-  Status status = WriteFrame(commandData);
+Status PN532::SendCommand(DataFrame* command_data, int retries) {
+  Status status = WriteFrame(command_data);
   if (status != Status::kOk) {
     return status;
   }
 
-  if (os_semaphore_take(response_available_, command_timeout_ms_, false) != 0) {
+  if (ReadAckFrame() != Status::kOk) {
     if (retries > 0) {
       pn532_log.warn("PN532::SendCommand failed to receive ACK, retrying...");
-      return SendCommand(commandData, retries - 1);
+      return SendCommand(command_data, retries - 1);
     } else {
       pn532_log.error("PN532::SendCommand failed to receive ACK");
       return Status::kError;
     }
   }
 
-  return ReadAckFrame();
+  return Status::kOk;
 }
 
-Status PN532::ReceiveResponse(DataFrame* responseData, system_tick_t timeout_ms,
-                              int retries) {
-  if (os_semaphore_take(response_available_, timeout_ms, false) != 0) {
-    return Status::kTimeout;
-  }
+Status PN532::ReceiveResponse(DataFrame* response_data,
+                              system_tick_t timeout_ms, int retries) {
+  // if (os_semaphore_take(response_available_, timeout_ms, false) != 0) {
+  //   return Status::kTimeout;
+  // }
 
-  Status status = ReadFrame(responseData);
+  Status status = ReadFrame(response_data);
   if (status != Status::kOk) {
     if (retries > 0) {
       pn532_log.warn(
           "ReceiveResponse did not receive frame, retrying with NACK...");
       serial_interface_->write(PN532_NACK, sizeof(PN532_NACK));
-      return ReceiveResponse(responseData, timeout_ms, retries - 1);
+      return ReceiveResponse(response_data, timeout_ms, retries - 1);
     } else {
       pn532_log.error("ReceiveResponse did not receive correct frame.");
       return Status::kError;
     }
+  }
+
+  return Status::kOk;
+}
+
+Status PN532::CallFunction(DataFrame* command_in_response_out,
+                           system_tick_t timeout_ms, int retries) {
+  while (serial_interface_->available()) {
+    serial_interface_->read();
+  }
+
+  Status result = SendCommand(command_in_response_out, retries);
+  if (result != Status::kOk) {
+    pn532_log.error("CommandDialog Send failed");
+    return result;
+  }
+
+  result = ReceiveResponse(command_in_response_out, timeout_ms, retries);
+  if (result != Status::kOk) {
+    pn532_log.error("CommandDialog Receibe failed");
+    return result;
   }
 
   return Status::kOk;
@@ -92,59 +116,79 @@ Status PN532::ResetController() {
   // 100us should be enough to reset, RSTOUT would indicate that PN532 is
   // actually reset. Since this is not wired, wait for 10ms, that should do the
   // trick.
-  delay(10);
+  delay(50);
   digitalWrite(reset_pin_, HIGH);
-  delay(1);
+  delay(50);
 
   // 6.3.2.3 Case of PN532 in Power Down mode
   // HSU wake up condition: the real waking up condition is the 5th rising edge
   // on the serial line, hence send first a 0x55 dummy byte and wait for the
   // waking up delay before sending the command frame.
-  serial_interface_->write(PN532_WAKEUP);
+  // serial_interface_->write(PN532_WAKEUP);
 
   // the host controller has to wait for at least T_osc_start before sending a
   // new command that will be properly understood. T_osc_start is typically a
   // few 100µs, but depending of the quartz, board layout and capacitors, it can
   // be up to 2ms
-  delay(2);
+  // delay(2);
+
+  uint8_t data[] = {0x55, 0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  serial_interface_->write(data, sizeof(data));
+
+  // uint8_t data[] = {0x55, 0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  //                   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  //                   0xFF, 0x03, 0xFD, 0xD4, 0x14, 0x01, 0x17, 0x00};
+  // serial_interface_->write(data, sizeof(data));
 
   // After reset, SAMConfiguration must be executed as a first command
   // https://files.waveshare.com/upload/b/bb/Pn532um.pdf
   // see p89
   DataFrame sam_configuration{
-      .packetData =
+      .command = PN532_COMMAND_SAMCONFIGURATION,
+      .params =
           {
-              PN532_COMMAND_SAMCONFIGURATION,
               0x01,  // normal mode
-              0x00,  // timeout, not needed in normal mode
+              0x14,  // 0x14, timeout 50ms * 20 = 1 second
               0x01,  // use IRQ pin!
           },
-      .packetLength = 4};
+      .params_length = 3};
 
-  WriteFrame(&sam_configuration);
+  Status result = CallFunction(&sam_configuration);
+  if (result != Status::kOk) {
+    pn532_log.error("ResetController SAMConfiguration failed");
+    return result;
+  }
+
+  return CheckControllerFirmware();
+}
+
+Status PN532::CheckControllerFirmware() {
+  DataFrame get_firmware_version{.command = PN532_COMMAND_GETFIRMWAREVERSION,
+                                 .params_length = 0};
+
+  Status result = CallFunction(&get_firmware_version);
+  if (result != Status::kOk) {
+    pn532_log.error("CheckControllerFirmwarefailed");
+    return result;
+  }
+
+  if (get_firmware_version.params_length != sizeof(PN532_FIRMWARE_RESPONSE) ||
+      memcmp(get_firmware_version.params, PN532_FIRMWARE_RESPONSE,
+             sizeof(PN532_FIRMWARE_RESPONSE)) != 0) {
+    pn532_log.error("Firmware doesn't match!");
+    return Status::kError;
+  }
 
   return Status::kOk;
 }
 
-Status PN532::WriteFrame(DataFrame* commandData) {
-  if (commandData->packetLength < 1) {
-    pn532_log.error("PN532::WriteFrame: commandData is empty");
-    return Status::kError;
-  }
-
+Status PN532::WriteFrame(DataFrame* command_data) {
   // packet data length includes the TFI byte, hence + 1
-  size_t length = commandData->packetLength + 1;
+  size_t length = command_data->params_length + 2;
   if (length > PN532_FRAME_MAX_LENGTH) {
-    pn532_log.error("commandData packet is too long (%d bytes)", length);
+    pn532_log.error("command_data packet is too long (%d bytes)", length);
     return Status::kError;
-  }
-
-  if (pn532_log.isTraceEnabled()) {
-    pn532_log.trace("PN532::WriteFrame [%d bytes]: %s",
-                    commandData->packetLength,
-                    BytesToHexAndAsciiString(commandData->packetData,
-                                             commandData->packetLength)
-                        .c_str());
   }
 
   // See https://files.waveshare.com/upload/b/bb/Pn532um.pdf
@@ -162,12 +206,13 @@ Status PN532::WriteFrame(DataFrame* commandData) {
   // Data starting from here is included in the checksum.
   // [Byte 5] Frame identifier
   serial_interface_->write(PN532_HOSTTOPN532);
+  serial_interface_->write(command_data->command);
   // [Bytes 6..n] packet data
-  serial_interface_->write(commandData->packetData, commandData->packetLength);
+  serial_interface_->write(command_data->params, command_data->params_length);
 
-  uint8_t checksum = PN532_HOSTTOPN532;
-  for (uint8_t i = 0; i < commandData->packetLength; i++) {
-    checksum += commandData->packetData[i];
+  uint8_t checksum = PN532_HOSTTOPN532 + command_data->command;
+  for (uint8_t i = 0; i < command_data->params_length; i++) {
+    checksum += command_data->params[i];
   }
 
   // [Byte n+1] checksum
@@ -175,10 +220,19 @@ Status PN532::WriteFrame(DataFrame* commandData) {
   // [Byte n+2] postamble
   serial_interface_->write(PN532_POSTAMBLE);
 
+  serial_interface_->flush();
+
+  if (pn532_log.isTraceEnabled()) {
+    pn532_log.trace(
+        "WriteFrame(%#04x)[%s]", command_data->command,
+        BytesToHexString(command_data->params, command_data->params_length)
+            .c_str());
+  }
+
   return Status::kOk;
 }
 
-Status PN532::ReadFrame(DataFrame* responseData) {
+Status PN532::ReadFrame(DataFrame* response_data) {
   // See https://files.waveshare.com/upload/b/bb/Pn532um.pdf
   // 6.2 Host controller communication protocol
 
@@ -200,32 +254,40 @@ Status PN532::ReadFrame(DataFrame* responseData) {
     return Status::kError;
   }
 
+  // Check response command matches
+  uint8_t response_command = serial_interface_->read();
+  if (response_command != response_data->command + 1) {
+    pn532_log.error(
+        "response_command (%#04x) did not match expected command (%#04x)",
+        response_command, response_data->command);
+    return Status::kError;
+  }
+
   // Read frame with expected length of data. Note:
-  // - TFI byte was already consumed above.
-  // - responseData's packetData is big enough to contain the maximal
+  // - TFI byte and response_command was already consumed above.
+  // - response_data's packetData is big enough to contain the maximal
   // frame_length
-  responseData->packetLength = frame_length - 1;
+  response_data->params_length = frame_length - 2;
   size_t bytes_read = serial_interface_->readBytes(
-      (char*)responseData->packetData, responseData->packetLength);
-  if (bytes_read != responseData->packetLength) {
+      (char*)response_data->params, response_data->params_length);
+  if (bytes_read != response_data->params_length) {
     pn532_log.error(
         "Response stream tearminated early. Read %d bytes, expected %d",
-        bytes_read, responseData->packetLength);
+        bytes_read, response_data->params_length);
     return Status::kError;
   }
 
   if (pn532_log.isTraceEnabled()) {
-    pn532_log.trace("PN532::ReadFrame [%d bytes]: %s",
-                    responseData->packetLength,
-                    BytesToHexAndAsciiString(responseData->packetData,
-                                             responseData->packetLength)
-                        .c_str());
+    pn532_log.trace(
+        "ReadFrame(%#04x)[%s]", response_command,
+        BytesToHexString(response_data->params, response_data->params_length)
+            .c_str());
   }
 
-  uint8_t checksum = frame_identifier;
+  uint8_t checksum = frame_identifier + response_command;
   // Check frame checksum value matches bytes.
-  for (uint8_t i = 0; i < responseData->packetLength; i++) {
-    checksum += responseData->packetData[i];
+  for (uint8_t i = 0; i < response_data->params_length; i++) {
+    checksum += response_data->params[i];
   }
 
   // Add last "Data checksum byte".
@@ -274,6 +336,7 @@ Status PN532::ConsumeFrameStartSequence() {
       return Status::kError;
     }
   }
+
   return Status::kOk;
 }
 
