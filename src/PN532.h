@@ -14,8 +14,24 @@ struct DataFrame {
   size_t params_length;
 };
 
+struct SelectedTag {
+  uint8_t tg;
+};
+
+enum class PN532Error {
+  kUnspecified = 0,
+  kTimeout = 1,
+  kEmptyResponse = 2,
+  kNoTarget = 3,
+  kFirmwareMismatch = 4,
+
+};
+class Ntag424;
+
 // Communicates with a PN532 via UART.
 class PN532 {
+  friend Ntag424;
+
  public:
   // Constructs a new PN532 controller.
   //
@@ -29,8 +45,13 @@ class PN532 {
   //
   // Initializes the P2 hardware configuration (pinmodes, serial interface),
   // resets the PN532 and configures it for Initiator / PCD mode.
-  Status Begin();
+  tl::expected<void, PN532Error> Begin();
 
+  // Waits for a single ISO/IEC14443 Type A tag to be detected.
+  tl::expected<SelectedTag, PN532Error> WaitForTag(
+      system_tick_t timeout_ms = CONCURRENT_WAIT_FOREVER);
+
+ private:
   // Sends the command_data payload to the PN532.
   //
   // This function blocks until the data is transmitted and the command is
@@ -39,7 +60,8 @@ class PN532 {
   // Args:
   //   command_data: The DataFrame to send.
   //   retries: Number of retries in case of a communication error.
-  Status SendCommand(DataFrame* command_data, int retries = 3);
+  tl::expected<void, PN532Error> SendCommand(DataFrame* command_data,
+                                             int retries = 3);
 
   // Receives the response_data payload from the PN532.
   //
@@ -49,9 +71,9 @@ class PN532 {
   //   response_data: The DataFrame into which to put the received data.
   //   timeout_ms: Timeout to wait for trasmission start.
   //   retries: Number of retries in case of a communication error.
-  Status ReceiveResponse(DataFrame* response_data,
-                         system_tick_t timeout_ms = CONCURRENT_WAIT_FOREVER,
-                         int retries = 3);
+  tl::expected<void, PN532Error> ReceiveResponse(
+      DataFrame* response_data,
+      system_tick_t timeout_ms = CONCURRENT_WAIT_FOREVER, int retries = 3);
 
   // Sends the command and waits for the response.
   //
@@ -62,11 +84,12 @@ class PN532 {
   //   command_in_response_out: The in/out DataFrame .
   //   timeout_ms: Timeout to wait for trasmission start.
   //   retries: Number of retries in case of a communication error.
-  Status CallFunction(DataFrame* command_in_response_out,
-                      system_tick_t timeout_ms = CONCURRENT_WAIT_FOREVER,
-                      int retries = 3);
+  tl::expected<void, PN532Error> CallFunction(
+      DataFrame* command_in_response_out,
+      system_tick_t timeout_ms = CONCURRENT_WAIT_FOREVER, int retries = 3);
 
  private:
+  static Logger logger;
   bool is_initialized_;
   USARTSerial* serial_interface_;
   int8_t irq_pin_;
@@ -76,20 +99,20 @@ class PN532 {
 
   // Resets the PN532 via reset_pin_, then wakes it up and configures
   // it as PCD
-  Status ResetController();
+  tl::expected<void, PN532Error> ResetController();
 
   // Verified the communication and checks the expected response to
   // GetFirmwareVersion
-  Status CheckControllerFirmware();
+  tl::expected<void, PN532Error> CheckControllerFirmware();
 
   // Sends the command_data payload to the PN532.
-  Status WriteFrame(DataFrame* command_data);
+  tl::expected<void, PN532Error> WriteFrame(DataFrame* command_data);
   // Reads a response from the PN532, blocks until the data is received.
-  Status ReadFrame(DataFrame* response_data);
+  tl::expected<void, PN532Error> ReadFrame(DataFrame* response_data);
   // Reads the ACK response from the PN532.
-  Status ReadAckFrame();
+  tl::expected<void, PN532Error> ReadAckFrame();
   // Reads and discards input until frame start sequence 0x00 0xFF is received.
-  Status ConsumeFrameStartSequence();
+  tl::expected<void, PN532Error> ConsumeFrameStartSequence();
   // ISR handler for irq_pin_, signals response_available_
   void ResponseAvailableInterruptHandler();
 };

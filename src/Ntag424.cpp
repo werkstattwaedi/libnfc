@@ -34,7 +34,7 @@ Ntag424::DNA_StatusCode Ntag424::DNA_BasicTransceive(byte* sendData,
   memcpy(backData, in_data_exchange.params, in_data_exchange.params_length);
   *backLen = in_data_exchange.params_length;
 
-  if (result != Status::kOk) {
+  if (!result) {
     return DNA_STATUS_ERROR;
   }
 
