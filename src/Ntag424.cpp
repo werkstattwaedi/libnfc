@@ -27,7 +27,7 @@ Ntag424::DNA_StatusCode Ntag424::DNA_BasicTransceive(byte* sendData,
                                  {
                                      0x01,  // FIXME target
                                  },
-                             .params_length = 1 + sendLen};
+                             .params_length = (size_t)sendLen + 1};
   memcpy(in_data_exchange.params + 1, sendData, sendLen);
 
   auto result = pcd_->CallFunction(&in_data_exchange);
@@ -2011,7 +2011,7 @@ void Ntag424::DNA_CalculateCMACtNoData(byte Cmd, byte* CmdHeader,
 
 void Ntag424::DNA_CalculateCRC32NK(byte* message16, byte* backCRC) {
   uint32_t crc;
-  crc = CRC32::calculate(message16, 16) & 0xFFFFFFFF ^ 0xFFFFFFFF;
+  crc = (CRC32::calculate(message16, 16) & 0xFFFFFFFF) ^ 0xFFFFFFFF;
   memcpy(backCRC, &crc, 4);
 }
 
