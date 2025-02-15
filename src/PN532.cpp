@@ -47,7 +47,7 @@ tl::expected<void, PN532Error> PN532::Begin() {
   return ResetController();
 }
 
-tl::expected<SelectedTag, PN532Error> PN532::WaitForTag(
+tl::expected<std::shared_ptr<SelectedTag>, PN532Error> PN532::WaitForNewTag(
     system_tick_t timeout_ms) {
   // MaxTg is the maximum number of targets to be initialized by the PN532.
   // The PN532 is capable of handling 2 targets maximum at once, so this field
@@ -77,26 +77,45 @@ tl::expected<SelectedTag, PN532Error> PN532::WaitForTag(
     return tl::unexpected(PN532Error::kEmptyResponse);
   }
 
-  struct TargetData {
-    uint8_t tg;
-    uint16_t sens_res;
-    uint8_t sel_res;
-    uint8_t nfc_id_length;
-    uint8_t nfc_id[];
-  };
-
-  struct Response {
-    uint8_t number_targets;
-    TargetData target_data[2];
-  };
-
-  auto response = *((Response*)list_passive_target.params);
-
-  if (response.number_targets == 0) {
+  uint8_t number_targets = list_passive_target.params[0];
+  if (number_targets == 0) {
     return tl::unexpected(PN532Error::kNoTarget);
   }
 
-  return {SelectedTag{.tg = response.target_data[0].tg}};
+  // Only interested in tg ID and NFC ID
+  uint8_t tg = list_passive_target.params[1];
+
+  size_t nfc_id_length = list_passive_target.params[5];
+
+  auto nfc_id = std::make_unique<uint8_t[]>(nfc_id_length);
+  memcpy(nfc_id.get(), list_passive_target.params + 6, nfc_id_length);
+
+  return {std::shared_ptr<SelectedTag>{new SelectedTag{
+      .tg = tg,
+      .nfc_id_length = nfc_id_length,
+      .nfc_id = std::move(nfc_id),
+  }}};
+}
+
+tl::expected<bool, PN532Error> PN532::CheckTagStillAvailable(
+    std::shared_ptr<SelectedTag> tag) {
+  // for now, simply scan
+  auto result = WaitForNewTag(100);
+  if (!result) {
+    return tl::unexpected(result.error());
+  }
+
+  auto current_tag = result.value();
+  if (current_tag->nfc_id_length != tag->nfc_id_length) {
+    return {false};
+  }
+
+  if (memcmp(current_tag->nfc_id.get(), tag->nfc_id.get(),
+             tag->nfc_id_length) != 0) {
+    return {false};
+  }
+
+  return {true};
 }
 
 tl::expected<void, PN532Error> PN532::SendCommand(DataFrame* command_data,
@@ -107,6 +126,7 @@ tl::expected<void, PN532Error> PN532::SendCommand(DataFrame* command_data,
   }
 
   auto read_ack_frame = ReadAckFrame();
+  // logger.trace("Got Ack");
   if (!read_ack_frame) {
     if (retries > 0) {
       logger.warn("PN532::SendCommand failed to receive ACK, retrying...");
@@ -125,14 +145,19 @@ tl::expected<void, PN532Error> PN532::ReceiveResponse(DataFrame* response_data,
                                                       int retries) {
   uint32_t tickstart = millis();
   while (true) {
-    if (serial_interface_->available()) {
+    auto consume_start_sequence = ConsumeFrameStartSequence();
+    if (consume_start_sequence.has_value()) {
       break;
     }
 
+    if (consume_start_sequence.error() != PN532Error::kTimeout) {
+      return consume_start_sequence;
+    }
+
+    delay(5);
     if (millis() - tickstart > timeout_ms) {
       return tl::unexpected(PN532Error::kTimeout);
     }
-    delay(5);
   }
 
   auto read_frame = ReadFrame(response_data);
@@ -153,21 +178,6 @@ tl::expected<void, PN532Error> PN532::ReceiveResponse(DataFrame* response_data,
 
 tl::expected<void, PN532Error> PN532::CallFunction(
     DataFrame* command_in_response_out, system_tick_t timeout_ms, int retries) {
-  if (serial_interface_->available()) {
-    // Drop all bytes already in the buffer before a command is sent.
-    // It's NOT expected for bytes to be in the buffer.
-    String dropped_bytes;
-    while (serial_interface_->available()) {
-      char hex_chars[4];
-      snprintf(hex_chars, sizeof(hex_chars), "%02X ",
-               serial_interface_->read());
-      dropped_bytes += hex_chars;
-    }
-
-    logger.warn("Dropped available Serial bytes before calling function: %s",
-                dropped_bytes.c_str());
-  }
-
   auto send_command = SendCommand(command_in_response_out, retries);
   if (!send_command) {
     logger.error("CallFunction SendCommand failed");
@@ -177,7 +187,14 @@ tl::expected<void, PN532Error> PN532::CallFunction(
   auto receive_response =
       ReceiveResponse(command_in_response_out, timeout_ms, retries);
   if (!receive_response) {
-    logger.error("CallFunction ReceiveResponse failed");
+    logger.error("CallFunction ReceiveResponse failed (error: %d)",
+                 (int)receive_response.error());
+    if (receive_response.error() == PN532Error::kTimeout) {
+      // see "6.2.2.1 Data link level", section "d) Abort"
+      // When receiving the response timed out, send ACK to abort
+      serial_interface_->write(PN532_ACK, sizeof(PN532_ACK));
+    }
+
     return receive_response;
   }
 
@@ -307,20 +324,47 @@ tl::expected<void, PN532Error> PN532::WriteFrame(DataFrame* command_data) {
   return {};
 }
 
+int PN532::ReadByteWithDeadline(system_tick_t deadline) {
+  do {
+    int c = serial_interface_->read();
+    if (c >= 0) return c;
+  } while (millis() < deadline);
+  return -1;  // -1 indicates timeout
+}
+
+bool PN532::AwaitBytesWithDeadline(int awaited_bytes, system_tick_t deadline) {
+  do {
+    if (serial_interface_->available() >= awaited_bytes) return true;
+  } while (millis() < deadline);
+  return false;
+}
+
+int PN532::ReadByteWithTimeout(system_tick_t timeout_ms) {
+  int c;
+  auto startMillis = millis();
+  do {
+    c = serial_interface_->read();
+    if (c >= 0) return c;
+  } while (millis() - startMillis < timeout_ms);
+  return -1;  // -1 indicates timeout
+}
+
 tl::expected<void, PN532Error> PN532::ReadFrame(DataFrame* response_data) {
   // See https://files.waveshare.com/upload/b/bb/Pn532um.pdf
   // 6.2 Host controller communication protocol
+  // logger.trace("Start ReadFrame");
 
-  ConsumeFrameStartSequence();
+  auto deadline = millis() + command_timeout_ms_;
+  if (!AwaitBytesWithDeadline(4, deadline)) {
+    return tl::unexpected(PN532Error::kTimeout);
+  }
 
   uint8_t frame_length = serial_interface_->read();
   uint8_t frame_length_checksum = serial_interface_->read();
-  // Check length & length checksum match.
   if (((frame_length + frame_length_checksum) & 0xFF) != 0) {
     logger.error("Response length checksum did not match length!");
     return tl::unexpected(PN532Error::kUnspecified);
   }
-
   // Check TFI byte matches.
   uint8_t frame_identifier = serial_interface_->read();
   if (frame_identifier != PN532_PN532TOHOST) {
@@ -331,10 +375,11 @@ tl::expected<void, PN532Error> PN532::ReadFrame(DataFrame* response_data) {
 
   // Check response command matches
   uint8_t response_command = serial_interface_->read();
-  if (response_command != response_data->command + 1) {
+  uint8_t expected_response = response_data->command + 1;
+  if (response_command != expected_response) {
     logger.error(
         "response_command (%#04x) did not match expected command (%#04x)",
-        response_command, response_data->command);
+        response_command, expected_response);
     return tl::unexpected(PN532Error::kUnspecified);
   }
 
@@ -366,8 +411,11 @@ tl::expected<void, PN532Error> PN532::ReadFrame(DataFrame* response_data) {
   }
 
   // Add last "Data checksum byte".
-  checksum += serial_interface_->read();
-  if (checksum != 0) {
+  int checksum_byte = ReadByteWithDeadline(deadline);
+  if (checksum_byte < 0) {
+    return tl::unexpected(PN532Error::kTimeout);
+  }
+  if (((checksum + checksum_byte) & 0xff) != 0) {
     logger.error("Response checksum did not match expected checksum");
     return tl::unexpected(PN532Error::kUnspecified);
   }
@@ -379,18 +427,25 @@ tl::expected<void, PN532Error> PN532::ReadAckFrame() {
   // See https://files.waveshare.com/upload/b/bb/Pn532um.pdf
   // 6.2.1.3 ACK frame
   // This is essentially an empty frame, with a data LEN 0
+  auto deadline = millis() + command_timeout_ms_;
 
   auto consume_start_sequence = ConsumeFrameStartSequence();
   if (!consume_start_sequence) {
+    logger.error("ACK frame deadline 1");
     return consume_start_sequence;
   }
-  uint8_t frame_length = serial_interface_->read();
+
+  if (!AwaitBytesWithDeadline(2, deadline)) {
+    return tl::unexpected(PN532Error::kTimeout);
+  }
+
+  int frame_length = serial_interface_->read();
   if (frame_length != 0) {
     logger.error("ACK frame must be 0 length");
     return tl::unexpected(PN532Error::kUnspecified);
   }
 
-  uint8_t frame_length_checksum = serial_interface_->read();
+  int frame_length_checksum = serial_interface_->read();
   if (frame_length_checksum != 0xff) {
     logger.error("ACK frame length checksum invalid");
     return tl::unexpected(PN532Error::kUnspecified);
@@ -401,13 +456,23 @@ tl::expected<void, PN532Error> PN532::ReadAckFrame() {
 
 tl::expected<void, PN532Error> PN532::ConsumeFrameStartSequence() {
   // Skip reading until start sequence 0x00 0xFF is received.
-  uint8_t start_1 = serial_interface_->read();
-  uint8_t start_2 = serial_interface_->read();
+  auto deadline = millis() + command_timeout_ms_;
+
+  if (!AwaitBytesWithDeadline(2, deadline)) {
+    return tl::unexpected(PN532Error::kTimeout);
+  }
+
+  int start_1 = serial_interface_->read();
+  int start_2 = serial_interface_->read();
 
   uint8_t skipped_count = 0;
   while (start_1 != PN532_STARTCODE1 || start_2 != PN532_STARTCODE2) {
     start_1 = start_2;
-    start_2 = serial_interface_->read();
+    start_2 = ReadByteWithDeadline(deadline);
+    if (start_2 < 0) {
+      return tl::unexpected(PN532Error::kTimeout);
+    }
+
     skipped_count++;
     if (skipped_count > PN532_FRAME_MAX_LENGTH) {
       logger.error("Response frame preamble does not contain 0x00FF!");

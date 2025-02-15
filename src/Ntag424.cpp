@@ -10,7 +10,20 @@ CBC<AES128> cbc;
 AESTiny128 aes128;
 AES_CMAC cmac(aes128);
 
+byte CC_FILE_AT_DELIVERY[32] = {0x00, 0x17, 0x20, 0x01, 0x00, 0x00, 0xFF, 0x04,
+                                0x06, 0xE1, 0x04, 0x01, 0x00, 0x00, 0x00, 0x05,
+                                0x06, 0xE1, 0x05, 0x00, 0x80, 0x82, 0x83};
+byte NDEF_FILE_AT_DELIVERY[256] = {0x00};  // 256 zeros
+byte PROPRIETARY_FILE_AT_DELIVERY[128] = {
+    0x00, 0x7E};  // 0x00, 0x7E followed by 126 zeros
+
 Ntag424::Ntag424(PN532* pcd) : pcd_(pcd) {}
+
+Ntag424::DNA_StatusCode Ntag424::SetSelectedTag(
+    std::shared_ptr<SelectedTag> selected_tag) {
+  selected_tag_ = selected_tag;
+  return DNA_STATUS_OK;
+}
 
 /////////////////////////////////////////////////////////////////////////////////////
 //
@@ -22,21 +35,30 @@ Ntag424::DNA_StatusCode Ntag424::DNA_BasicTransceive(byte* sendData,
                                                      byte sendLen,
                                                      byte* backData,
                                                      byte* backLen, byte pcb) {
+  if (!selected_tag_) {
+    return DNA_STATUS_ERROR;
+  }
+
   DataFrame in_data_exchange{.command = PN532_COMMAND_INDATAEXCHANGE,
                              .params =
                                  {
-                                     0x01,  // FIXME target
+                                     selected_tag_->tg,
                                  },
                              .params_length = (size_t)sendLen + 1};
   memcpy(in_data_exchange.params + 1, sendData, sendLen);
 
   auto result = pcd_->CallFunction(&in_data_exchange);
-  memcpy(backData, in_data_exchange.params, in_data_exchange.params_length);
-  *backLen = in_data_exchange.params_length;
-
   if (!result) {
     return DNA_STATUS_ERROR;
   }
+  auto communication_status = in_data_exchange.params[0];
+  if (communication_status != 0) {
+    Log.error("INDATAEXCHANGE returned error = 0x%02X", communication_status);
+  }
+
+  memcpy(backData, in_data_exchange.params + 1,
+         in_data_exchange.params_length - 1);
+  *backLen = in_data_exchange.params_length - 1;
 
   return DNA_STATUS_OK;
 }
@@ -189,6 +211,24 @@ Ntag424::DNA_StatusCode Ntag424::DNA_AuthenticateEV2NonFirst(byte keyNumber,
 // Plain communication mode
 //
 /////////////////////////////////////////////////////////////////////////////////////
+
+Ntag424::DNA_StatusCode Ntag424::DNA_Plain_IsNewTag_WithFactoryDefaults() {
+  return DNA_STATUS_OK;
+}
+
+Ntag424::DNA_StatusCode Ntag424::DNA_Plain_Ping() {
+  byte backData[7];
+  byte backLen = 7;
+
+  Ntag424::DNA_StatusCode dna_statusCode;
+  dna_statusCode = DNA_Plain_GetVersion_native(0x60, 0xAF, backData, &backLen);
+
+  if (dna_statusCode != DNA_STATUS_OK) return dna_statusCode;
+
+  if (backLen != 7) return DNA_WRONG_RESPONSE_LEN;
+
+  return DNA_STATUS_OK;
+}
 
 // Warning! "SDMEnabled = false" disables SDM for a file!
 // Use this function if you do not need to use SDM (SDM is disabled by default
@@ -1312,49 +1352,49 @@ Ntag424::DNA_StatusCode Ntag424::DNA_Full_WriteData(DNA_File file,
 // MFRC522Extended.cpp in MFRC522 lib. TCL_Deselect was added and PICC_RequestA
 // was changed to PICC_WakeupA Deselects current card and returns true if any
 // card responds to a WakeupA command.
-bool Ntag424::PICC_TryDeselectAndWakeupA() {
-  // byte bufferATQA[2];
-  // byte bufferSize = sizeof(bufferATQA);
+// bool Ntag424::PICC_TryDeselectAndWakeupA() {
+// byte bufferATQA[2];
+// byte bufferSize = sizeof(bufferATQA);
 
-  // TCL_Deselect(&tag); // deselect current card
+// TCL_Deselect(&tag); // deselect current card
 
-  // // Reset baud rates
-  // PCD_WriteRegister(TxModeReg, 0x00);
-  // PCD_WriteRegister(RxModeReg, 0x00);
-  // // Reset ModWidthReg
-  // PCD_WriteRegister(ModWidthReg, 0x26);
+// // Reset baud rates
+// PCD_WriteRegister(TxModeReg, 0x00);
+// PCD_WriteRegister(RxModeReg, 0x00);
+// // Reset ModWidthReg
+// PCD_WriteRegister(ModWidthReg, 0x26);
 
-  // MFRC522::StatusCode result = PICC_WakeupA(bufferATQA, &bufferSize);
+// MFRC522::StatusCode result = PICC_WakeupA(bufferATQA, &bufferSize);
 
-  // if (result == DNA_STATUS_OK || result == STATUS_COLLISION) {
-  //   tag.atqa = ((uint16_t)bufferATQA[1] << 8) | bufferATQA[0];
-  //   tag.ats.size = 0;
-  //   tag.ats.fsc = 32;  // default FSC value
+// if (result == DNA_STATUS_OK || result == STATUS_COLLISION) {
+//   tag.atqa = ((uint16_t)bufferATQA[1] << 8) | bufferATQA[0];
+//   tag.ats.size = 0;
+//   tag.ats.fsc = 32;  // default FSC value
 
-  //   // Defaults for TA1
-  //   tag.ats.ta1.transmitted = false;
-  //   tag.ats.ta1.sameD = false;
-  //   tag.ats.ta1.ds = MFRC522Extended::BITRATE_106KBITS;
-  //   tag.ats.ta1.dr = MFRC522Extended::BITRATE_106KBITS;
+//   // Defaults for TA1
+//   tag.ats.ta1.transmitted = false;
+//   tag.ats.ta1.sameD = false;
+//   tag.ats.ta1.ds = MFRC522Extended::BITRATE_106KBITS;
+//   tag.ats.ta1.dr = MFRC522Extended::BITRATE_106KBITS;
 
-  //   // Defaults for TB1
-  //   tag.ats.tb1.transmitted = false;
-  //   tag.ats.tb1.fwi = 0;  // TODO: Don't know the default for this!
-  //   tag.ats.tb1.sfgi = 0;  // The default value of SFGI is 0 (meaning that
-  //   the card does not need any particular SFGT)
+//   // Defaults for TB1
+//   tag.ats.tb1.transmitted = false;
+//   tag.ats.tb1.fwi = 0;  // TODO: Don't know the default for this!
+//   tag.ats.tb1.sfgi = 0;  // The default value of SFGI is 0 (meaning that
+//   the card does not need any particular SFGT)
 
-  //   // Defaults for TC1
-  //   tag.ats.tc1.transmitted = false;
-  //   tag.ats.tc1.supportsCID = true;
-  //   tag.ats.tc1.supportsNAD = false;
+//   // Defaults for TC1
+//   tag.ats.tc1.transmitted = false;
+//   tag.ats.tc1.supportsCID = true;
+//   tag.ats.tc1.supportsNAD = false;
 
-  //   memset(tag.ats.data, 0, FIFO_SIZE - 2);
+//   memset(tag.ats.data, 0, FIFO_SIZE - 2);
 
-  //   tag.blockNumber = false;
-  //   return true;
-  // }
-  return false;
-}
+//   tag.blockNumber = false;
+//   return true;
+// }
+//   return false;
+// }
 
 /////////////////////////////////////////////////////////////////////////////////////
 //

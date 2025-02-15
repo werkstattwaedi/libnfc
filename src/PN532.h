@@ -16,6 +16,8 @@ struct DataFrame {
 
 struct SelectedTag {
   uint8_t tg;
+  size_t nfc_id_length;
+  std::unique_ptr<uint8_t[]> nfc_id;
 };
 
 enum class PN532Error {
@@ -48,8 +50,11 @@ class PN532 {
   tl::expected<void, PN532Error> Begin();
 
   // Waits for a single ISO/IEC14443 Type A tag to be detected.
-  tl::expected<SelectedTag, PN532Error> WaitForTag(
+  tl::expected<std::shared_ptr<SelectedTag>, PN532Error> WaitForNewTag(
       system_tick_t timeout_ms = CONCURRENT_WAIT_FOREVER);
+
+  // Check whether previously selected tag is still available.
+  tl::expected<bool, PN532Error> CheckTagStillAvailable(std::shared_ptr<SelectedTag> tag);
 
  private:
   // Sends the command_data payload to the PN532.
@@ -115,6 +120,11 @@ class PN532 {
   tl::expected<void, PN532Error> ConsumeFrameStartSequence();
   // ISR handler for irq_pin_, signals response_available_
   void ResponseAvailableInterruptHandler();
+
+  int ReadByte() { return ReadByteWithTimeout(command_timeout_ms_); }
+  bool AwaitBytesWithDeadline(int awaited_bytes, system_tick_t deadline);
+  int ReadByteWithDeadline(system_tick_t deadline);
+  int ReadByteWithTimeout(system_tick_t timeout_ms = CONCURRENT_WAIT_FOREVER);
 };
 
 #define PN532_PREAMBLE (0x00)    ///< Command sequence start, byte 1/3

@@ -89,18 +89,16 @@ class Ntag424 {
     DNA_COMMMODE_FULL = 0x03    // 0b11
   };
 
+  std::shared_ptr<SelectedTag> selected_tag_ = nullptr;
+
   byte CmdCtr[2] = {0x00, 0x00};
 
   byte SesAuthEncKey[16];
   byte SesAuthMacKey[16];
   byte TI[4];
 
-  // File contents at delivery:
-  // byte CC_FILE_AT_DELIVERY[32] = {0x00, 0x17, 0x20, 0x01, 0x00, 0x00, 0xFF,
-  // 0x04, 0x06, 0xE1, 0x04, 0x01, 0x00, 0x00, 0x00, 0x05, 0x06, 0xE1, 0x05,
-  // 0x00, 0x80, 0x82, 0x83}; byte NDEF_FILE_AT_DELIVERY[256] = {0x00}; // 256
-  // zeros byte PROPRIETARY_FILE_AT_DELIVERY[128] = {0x00, 0x7E}; // 0x00, 0x7E
-  // followed by 126 zeros
+  // Sets the currently selected card.
+  DNA_StatusCode SetSelectedTag(std::shared_ptr<SelectedTag> selected_tag);
 
   /////////////////////////////////////////////////////////////////////////////////////
   //
@@ -127,6 +125,12 @@ class Ntag424 {
   // Plain communication mode
   //
   /////////////////////////////////////////////////////////////////////////////////////
+
+  // Pings the card by checking
+  DNA_StatusCode DNA_Plain_Ping();
+
+  // Checks whether the card is a new tag, with only factory defaults.
+  DNA_StatusCode DNA_Plain_IsNewTag_WithFactoryDefaults();
 
   // Warning! "SDMEnabled = false" disables SDM for a file!
   // Use this function if you do not need to use SDM (SDM is disabled by default
@@ -323,10 +327,6 @@ class Ntag424 {
   // Helper functions
   //
   /////////////////////////////////////////////////////////////////////////////////////
-
-  // Deselects current card and returns true if any card responds to a WakeupA
-  // command.
-  bool PICC_TryDeselectAndWakeupA();
 
  protected:
   PN532* pcd_;
