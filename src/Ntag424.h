@@ -15,79 +15,34 @@
 
 class PN532;
 
-class Ntag424 {
+using AuthChallenge = Buffer;
+
+class Ntag424 : protected Ntag424Authenticated {
+ public:
+  enum DNA_StatusCode : byte;
+  enum DNA_File : byte;
+  enum DNA_CommMode : byte;
+
+  // --- BEGIN: Intended API for next version ---------------------------------
+
+  tl::expected<void, DNA_StatusCode> Authenticate(
+      byte key_number, const std::array<byte, 16>& key_bytes);
+
+  tl::expected<std::unique_ptr<AuthChallenge>, DNA_StatusCode>
+  AuthenticateWithCloud_Begin(byte keyNumber);
+
+  // --- Authenticated API - move to different interface?
+
+  tl::expected<std::unique_ptr<Buffer>, DNA_StatusCode> GetCardUID();
+
+  // --- END: Intended API for next version -----------------------------------
+
  public:
   /////////////////////////////////////////////////////////////////////////////////////
   // Contructors
   /////////////////////////////////////////////////////////////////////////////////////
 
   Ntag424(PN532* pcd);
-
-  enum DNA_StatusCode : byte {
-    DNA_STATUS_OK =
-        0,  // Success (and 0x9000, 0x9100 - OPERATION_OK / Successful operaton)
-    DNA_STATUS_ERROR = 1,      // Error in communication
-    DNA_STATUS_COLLISION = 2,  // Collission detected
-    DNA_STATUS_TIMEOUT = 3,    // Timeout in communication.
-    DNA_STATUS_NO_ROOM = 4,    // A buffer is not big enough.
-    DNA_STATUS_INTERNAL_ERROR =
-        5,  // Internal error in the code. Should not happen ;-)
-    DNA_STATUS_INVALID = 6,    // Invalid argument.
-    DNA_STATUS_CRC_WRONG = 7,  // The CRC_A does not match
-
-    COMMAND_NOT_FOUND = 8,      // (910B) - Status used only in Read_Sig.
-    COMMAND_FORMAT_ERROR = 9,   // (910C) - Status used only in Read_Sig.
-    ILLEGAL_COMMAND_CODE = 10,  // (911C) Command code not supported.
-    INTEGRITY_ERROR =
-        11,  // (911E) CRC or MAC does not match data. Padding bytes not valid.
-    NO_SUCH_KEY = 12,        // (9140) Invalid key number specified.
-    LENGTH_ERROR = 13,       // (6700, 917E) Length of command string invalid.
-    PERMISSION_DENIED = 14,  // (919D) Current configuration / status does not
-                             // allow the requested command.
-    PARAMETER_ERROR = 15,    // (919E) Value of the parameter(s) invalid.
-    AUTHENTICATION_DELAY = 16,  // (91AD) Currently not allowed to authenticate.
-                                // Keep trying until full delay is spent.
-    AUTHENTICATION_ERROR = 17,  // (91AE) Current authentication status does not
-                                // allow the requested command.
-    ADDITIONAL_FRAME =
-        18,               // (91AF) Additionaldata frame is expected to be sent.
-    BOUNDARY_ERROR = 19,  // (91BE) Attempt to read/write data from/to beyond
-                          // the file's/record's limits. Attempt to exceed the
-                          // limits of a value file.
-    COMMAND_ABORTED =
-        20,  // (91CA) Previous Command was not fully completed. Not all Frames
-             // were requested or provided by the PCD.
-    MEMORY_ERROR = 21,    // (6581, 91EE) Failure when reading or writing to
-                          // non-volatile memory.
-    FILE_NOT_FOUND = 22,  // (91F0) Specified file number does not exist.
-    SECURITY_NOT_SATISFIED = 23,    // (6982) Security status not satisfied.
-    CONDITIONS_NOT_SATISFIED = 24,  // (6985) Conditions of use not satisfied.
-    FILE_OR_APP_NOT_FOUND = 25,     // (6A82) File or application not found.
-    INCORRECT_PARAMS = 26,          // (6A86) Incorrect parameters P1-P2.
-    INCORRECT_LC = 27,       // (6A87) Lc inconsistent with parameters P1-P2.
-    CLA_NOT_SUPPORTED = 28,  // (6E00) CLA not supported
-
-    DNA_WRONG_RESPONSE_LEN = 29,
-    DNA_WRONG_RESPONSE_CMAC = 30,
-    DNA_WRONG_RNDA = 31,
-    DNA_CMD_CTR_OVERFLOW = 32,
-    DNA_UNKNOWN_ERROR = 33,
-    DNA_SDM_NOT_IMPLEMENTED_IN_LIB = 34,
-
-    DNA_STATUS_MIFARE_NACK = 0xff  // A MIFARE PICC responded with NAK.
-  };
-
-  enum DNA_File : byte {
-    DNA_FILE_CC = 0x01,
-    DNA_FILE_NDEF = 0x02,
-    DNA_FILE_PROPRIETARY = 0x03
-  };
-
-  enum DNA_CommMode : byte {
-    DNA_COMMMODE_PLAIN = 0x00,  // 0b00, but can be 0b10 (0x02) as well
-    DNA_COMMMODE_MAC = 0x01,    // 0b01
-    DNA_COMMMODE_FULL = 0x03    // 0b11
-  };
 
   std::shared_ptr<SelectedTag> selected_tag_ = nullptr;
 
@@ -110,15 +65,11 @@ class Ntag424 {
                                      byte* backData, byte* backLen,
                                      byte pcb = 2);
 
-  DNA_StatusCode DNA_AuthenticateEV2First(byte keyNumber, byte* key,
+  DNA_StatusCode DNA_AuthenticateEV2First(byte keyNumber, const byte* key,
                                           byte* rndA);
 
   DNA_StatusCode DNA_AuthenticateEV2NonFirst(byte keyNumber, byte* key,
                                              byte* rndA);
-
-  // DNA_AuthenticateLRPFirst - not implemented
-
-  // DNA_AuthenticateLRPNonFirst - not implemented
 
   /////////////////////////////////////////////////////////////////////////////////////
   //
@@ -386,8 +337,75 @@ class Ntag424 {
   void DNA_CalculateIV(byte b0, byte b1, byte* backIV);
   void DNA_CalculateIVCmd(byte* backIVCmd);
   void DNA_CalculateIVResp(byte* backIVResp);
-  void DNA_GenerateSesAuthKeys(byte* authKey, byte* RndA, byte* RndB);
+  void DNA_GenerateSesAuthKeys(const byte* authKey, byte* RndA, byte* RndB);
   void DNA_CalculateSV(byte b0, byte b1, byte* RndA, byte* RndB, byte* backSV);
   void DNA_CalculateSV1(byte* RndA, byte* RndB, byte* backSV1);
   void DNA_CalculateSV2(byte* RndA, byte* RndB, byte* backSV2);
+
+ public:
+  enum DNA_StatusCode : byte {
+    DNA_STATUS_OK =
+        0,  // Success (and 0x9000, 0x9100 - OPERATION_OK / Successful operaton)
+    DNA_STATUS_ERROR = 1,      // Error in communication
+    DNA_STATUS_COLLISION = 2,  // Collission detected
+    DNA_STATUS_TIMEOUT = 3,    // Timeout in communication.
+    DNA_STATUS_NO_ROOM = 4,    // A buffer is not big enough.
+    DNA_STATUS_INTERNAL_ERROR =
+        5,  // Internal error in the code. Should not happen ;-)
+    DNA_STATUS_INVALID = 6,    // Invalid argument.
+    DNA_STATUS_CRC_WRONG = 7,  // The CRC_A does not match
+
+    COMMAND_NOT_FOUND = 8,      // (910B) - Status used only in Read_Sig.
+    COMMAND_FORMAT_ERROR = 9,   // (910C) - Status used only in Read_Sig.
+    ILLEGAL_COMMAND_CODE = 10,  // (911C) Command code not supported.
+    INTEGRITY_ERROR =
+        11,  // (911E) CRC or MAC does not match data. Padding bytes not valid.
+    NO_SUCH_KEY = 12,        // (9140) Invalid key number specified.
+    LENGTH_ERROR = 13,       // (6700, 917E) Length of command string invalid.
+    PERMISSION_DENIED = 14,  // (919D) Current configuration / status does not
+                             // allow the requested command.
+    PARAMETER_ERROR = 15,    // (919E) Value of the parameter(s) invalid.
+    AUTHENTICATION_DELAY = 16,  // (91AD) Currently not allowed to authenticate.
+                                // Keep trying until full delay is spent.
+    AUTHENTICATION_ERROR = 17,  // (91AE) Current authentication status does not
+                                // allow the requested command.
+    ADDITIONAL_FRAME =
+        18,               // (91AF) Additionaldata frame is expected to be sent.
+    BOUNDARY_ERROR = 19,  // (91BE) Attempt to read/write data from/to beyond
+                          // the file's/record's limits. Attempt to exceed the
+                          // limits of a value file.
+    COMMAND_ABORTED =
+        20,  // (91CA) Previous Command was not fully completed. Not all Frames
+             // were requested or provided by the PCD.
+    MEMORY_ERROR = 21,    // (6581, 91EE) Failure when reading or writing to
+                          // non-volatile memory.
+    FILE_NOT_FOUND = 22,  // (91F0) Specified file number does not exist.
+    SECURITY_NOT_SATISFIED = 23,    // (6982) Security status not satisfied.
+    CONDITIONS_NOT_SATISFIED = 24,  // (6985) Conditions of use not satisfied.
+    FILE_OR_APP_NOT_FOUND = 25,     // (6A82) File or application not found.
+    INCORRECT_PARAMS = 26,          // (6A86) Incorrect parameters P1-P2.
+    INCORRECT_LC = 27,       // (6A87) Lc inconsistent with parameters P1-P2.
+    CLA_NOT_SUPPORTED = 28,  // (6E00) CLA not supported
+
+    DNA_WRONG_RESPONSE_LEN = 29,
+    DNA_WRONG_RESPONSE_CMAC = 30,
+    DNA_WRONG_RNDA = 31,
+    DNA_CMD_CTR_OVERFLOW = 32,
+    DNA_UNKNOWN_ERROR = 33,
+    DNA_SDM_NOT_IMPLEMENTED_IN_LIB = 34,
+
+    DNA_STATUS_MIFARE_NACK = 0xff  // A MIFARE PICC responded with NAK.
+  };
+
+  enum DNA_File : byte {
+    DNA_FILE_CC = 0x01,
+    DNA_FILE_NDEF = 0x02,
+    DNA_FILE_PROPRIETARY = 0x03
+  };
+
+  enum DNA_CommMode : byte {
+    DNA_COMMMODE_PLAIN = 0x00,  // 0b00, but can be 0b10 (0x02) as well
+    DNA_COMMMODE_MAC = 0x01,    // 0b01
+    DNA_COMMMODE_FULL = 0x03    // 0b11
+  };
 };

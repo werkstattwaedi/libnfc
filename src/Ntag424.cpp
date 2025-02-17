@@ -25,6 +25,59 @@ Ntag424::DNA_StatusCode Ntag424::SetSelectedTag(
   return DNA_STATUS_OK;
 }
 
+// need something better here.
+void generateRndA(byte* backRndA) {
+  for (byte i = 0; i < 16; i++) backRndA[i] = random(0xFF);
+}
+
+tl::expected<void, Ntag424::DNA_StatusCode> Ntag424::Authenticate(
+    byte key_number, const std::array<byte, 16>& key_bytes) {
+  byte random_challenge[16];
+  generateRndA(random_challenge);
+
+  auto result =
+      DNA_AuthenticateEV2First(key_number, key_bytes.begin(), random_challenge);
+  if (result != DNA_STATUS_OK) {
+    return tl::unexpected(result);
+  }
+
+  return {};
+}
+
+tl::expected<std::unique_ptr<AuthChallenge>, Ntag424::DNA_StatusCode>
+Ntag424::AuthenticateWithCloud_Begin(byte key_number) {
+  byte back_data[18];
+  byte back_len = 18;
+
+  auto statusCode =
+      DNA_AuthenticateEV2First_Part1(key_number, back_data, &back_len);
+
+  if (statusCode != DNA_StatusCode::DNA_STATUS_OK) {
+    return tl::unexpected((DNA_StatusCode)statusCode);
+  }
+
+  if (back_data[back_len - 2] != 0x91 || back_data[back_len - 1] != 0xAF) {
+    return tl::unexpected(DNA_InterpretErrorCode(&back_data[back_len - 2]));
+  }
+  if (back_len != 18) {
+    return tl::unexpected(DNA_WRONG_RESPONSE_LEN);
+  }
+
+  return {std::make_unique<AuthChallenge>(back_data, 16)};
+}
+
+tl::expected<std::unique_ptr<Buffer>, Ntag424::DNA_StatusCode>
+Ntag424::GetCardUID() {
+  byte uid_buffer[7];
+
+  auto card_uid_status = DNA_Full_GetCardUID(uid_buffer);
+  if (card_uid_status != Ntag424::DNA_STATUS_OK) {
+    return tl::unexpected(card_uid_status);
+  }
+
+  return {std::make_unique<Buffer>(uid_buffer, 7)};
+}
+
 /////////////////////////////////////////////////////////////////////////////////////
 //
 // Basic functions for communicating with NTAG 424 DNA cards
@@ -64,7 +117,7 @@ Ntag424::DNA_StatusCode Ntag424::DNA_BasicTransceive(byte* sendData,
 }
 
 Ntag424::DNA_StatusCode Ntag424::DNA_AuthenticateEV2First(byte keyNumber,
-                                                          byte* key,
+                                                          const byte* key,
                                                           byte* rndA) {
   byte backData[61];
   byte backLen = 61;
@@ -229,9 +282,6 @@ Ntag424::DNA_Plain_IsNewTag_WithFactoryDefaults() {
   if (memcmp(backData, CC_FILE_AT_DELIVERY, lengthToRead) != 0) {
     return {false};
   }
-
-  
-
 
   return {true};
 }
@@ -2132,7 +2182,8 @@ void Ntag424::DNA_CalculateIVResp(byte* backIVResp) {
   DNA_CalculateIV(0x5A, 0xA5, backIVResp);
 }
 
-void Ntag424::DNA_GenerateSesAuthKeys(byte* authKey, byte* RndA, byte* RndB) {
+void Ntag424::DNA_GenerateSesAuthKeys(const byte* authKey, byte* RndA,
+                                      byte* RndB) {
   byte SV[32];
 
   DNA_CalculateSV1(RndA, RndB, SV);
