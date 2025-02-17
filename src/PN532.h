@@ -54,7 +54,14 @@ class PN532 {
       system_tick_t timeout_ms = CONCURRENT_WAIT_FOREVER);
 
   // Check whether previously selected tag is still available.
-  tl::expected<bool, PN532Error> CheckTagStillAvailable(std::shared_ptr<SelectedTag> tag);
+  tl::expected<bool, PN532Error> CheckTagStillAvailable(
+      std::shared_ptr<SelectedTag> tag);
+
+  tl::expected<void, PN532Error> ReleaseTag(std::shared_ptr<SelectedTag> tag);
+
+  // Resets the PN532 via reset_pin_, then wakes it up and configures
+  // it as PCD
+  tl::expected<void, PN532Error> ResetController();
 
  private:
   // Sends the command_data payload to the PN532.
@@ -101,10 +108,6 @@ class PN532 {
   int8_t reset_pin_;
   os_semaphore_t response_available_;
   system_tick_t command_timeout_ms_;
-
-  // Resets the PN532 via reset_pin_, then wakes it up and configures
-  // it as PCD
-  tl::expected<void, PN532Error> ResetController();
 
   // Verified the communication and checks the expected response to
   // GetFirmwareVersion

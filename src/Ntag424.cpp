@@ -212,8 +212,28 @@ Ntag424::DNA_StatusCode Ntag424::DNA_AuthenticateEV2NonFirst(byte keyNumber,
 //
 /////////////////////////////////////////////////////////////////////////////////////
 
-Ntag424::DNA_StatusCode Ntag424::DNA_Plain_IsNewTag_WithFactoryDefaults() {
-  return DNA_STATUS_OK;
+tl::expected<bool, Ntag424::DNA_StatusCode>
+Ntag424::DNA_Plain_IsNewTag_WithFactoryDefaults() {
+  DNA_File file = DNA_FILE_CC;
+  uint16_t lengthToRead = 32;
+  byte* backData = new byte[lengthToRead];
+  memset(backData, 0, lengthToRead);
+  uint16_t backLen = lengthToRead;
+  byte offset = 0;
+  auto status =
+      DNA_Plain_ISOReadBinary(file, lengthToRead, offset, backData, &backLen);
+  if (status != DNA_STATUS_OK) {
+    return tl::unexpected(status);
+  }
+
+  if (memcmp(backData, CC_FILE_AT_DELIVERY, lengthToRead) != 0) {
+    return {false};
+  }
+
+  
+
+
+  return {true};
 }
 
 Ntag424::DNA_StatusCode Ntag424::DNA_Plain_Ping() {

@@ -130,7 +130,7 @@ class Ntag424 {
   DNA_StatusCode DNA_Plain_Ping();
 
   // Checks whether the card is a new tag, with only factory defaults.
-  DNA_StatusCode DNA_Plain_IsNewTag_WithFactoryDefaults();
+  tl::expected<bool, DNA_StatusCode> DNA_Plain_IsNewTag_WithFactoryDefaults();
 
   // Warning! "SDMEnabled = false" disables SDM for a file!
   // Use this function if you do not need to use SDM (SDM is disabled by default

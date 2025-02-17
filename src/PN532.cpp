@@ -66,7 +66,7 @@ tl::expected<std::shared_ptr<SelectedTag>, PN532Error> PN532::WaitForNewTag(
                                     },
                                 .params_length = 2};
 
-  auto call_function = CallFunction(&list_passive_target);
+  auto call_function = CallFunction(&list_passive_target, timeout_ms, 1);
   if (!call_function) {
     logger.error("WaitForTag InListPassiveTarget failed");
     return tl::unexpected(call_function.error());
@@ -116,6 +116,21 @@ tl::expected<bool, PN532Error> PN532::CheckTagStillAvailable(
   }
 
   return {true};
+}
+
+tl::expected<void, PN532Error> PN532::ReleaseTag(
+    std::shared_ptr<SelectedTag> tag) {
+  DataFrame release{.command = PN532_COMMAND_INRELEASE,
+                    .params = {tag->tg},
+                    .params_length = 1};
+
+  auto call_function = CallFunction(&release);
+  if (!call_function) {
+    logger.error("WaitForTag InRelease failed");
+    return tl::unexpected(call_function.error());
+  }
+
+  return {};
 }
 
 tl::expected<void, PN532Error> PN532::SendCommand(DataFrame* command_data,
