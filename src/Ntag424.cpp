@@ -63,7 +63,7 @@ Ntag424::AuthenticateWithCloud_Begin(byte key_number) {
     return tl::unexpected(DNA_WRONG_RESPONSE_LEN);
   }
 
-  return {std::make_unique<AuthChallenge>(back_data, 16)};
+  return {std::make_unique<AuthChallenge>((const char*)back_data, 16)};
 }
 
 tl::expected<std::unique_ptr<Buffer>, Ntag424::DNA_StatusCode>
@@ -75,7 +75,7 @@ Ntag424::GetCardUID() {
     return tl::unexpected(card_uid_status);
   }
 
-  return {std::make_unique<Buffer>(uid_buffer, 7)};
+  return {std::make_unique<Buffer>((const char*)uid_buffer, 7)};
 }
 
 /////////////////////////////////////////////////////////////////////////////////////

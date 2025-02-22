@@ -17,7 +17,7 @@ class PN532;
 
 using AuthChallenge = Buffer;
 
-class Ntag424 : protected Ntag424Authenticated {
+class Ntag424 {
  public:
   enum DNA_StatusCode : byte;
   enum DNA_File : byte;
