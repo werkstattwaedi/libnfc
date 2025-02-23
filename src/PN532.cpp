@@ -223,30 +223,21 @@ tl::expected<void, PN532Error> PN532::ResetController() {
   // 100us should be enough to reset, RSTOUT would indicate that PN532 is
   // actually reset. Since this is not wired, wait for 10ms, that should do the
   // trick.
-  delay(50);
+  delay(10);
   digitalWrite(reset_pin_, HIGH);
-  delay(50);
+  delay(10);
 
   // 6.3.2.3 Case of PN532 in Power Down mode
   // HSU wake up condition: the real waking up condition is the 5th rising edge
   // on the serial line, hence send first a 0x55 dummy byte and wait for the
   // waking up delay before sending the command frame.
-  // serial_interface_->write(PN532_WAKEUP);
+  serial_interface_->write(PN532_WAKEUP);
 
   // the host controller has to wait for at least T_osc_start before sending a
   // new command that will be properly understood. T_osc_start is typically a
   // few 100µs, but depending of the quartz, board layout and capacitors, it can
   // be up to 2ms
-  // delay(2);
-
-  uint8_t data[] = {0x55, 0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-  serial_interface_->write(data, sizeof(data));
-
-  // uint8_t data[] = {0x55, 0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  //                   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  //                   0xFF, 0x03, 0xFD, 0xD4, 0x14, 0x01, 0x17, 0x00};
-  // serial_interface_->write(data, sizeof(data));
+  delay(2);
 
   // After reset, SAMConfiguration must be executed as a first command
   // https://files.waveshare.com/upload/b/bb/Pn532um.pdf
